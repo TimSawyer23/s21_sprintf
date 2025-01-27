@@ -35,18 +35,24 @@ int speca_is_c(char *str, char *speca, state_of_speca *state,
                va_list *arg_list);
 int speca_is_d(char *str, char *speca, state_of_speca *state,
                va_list *arg_list);
+int speca_is_f(char *str, char *speca, state_of_speca *state,
+               va_list *arg_list);
 
-char *my_itoa(int n);
+short int handle_overflow(int x);
+char *my_itoa(long n, char int_type);
 char *handle_flags_d(state_of_speca *state, char *strnbr);
+char *float_to_string(float number, int precision);
 
 int main() {
   char stroka[110000];
+  char stroka2[110000];
+  float ss = 15.21;
 
-  s21_sprintf(stroka,
-              "zopa %+ 100500.50cropa была хрень. %% Теперь снова спека %d %hd "
-              "%+.10d %ddss.",
-              'g', -5203, 2, 15, 0);
-  printf("\n%s\n", stroka);
+  s21_sprintf(stroka, "% .5d. %.6f", 32769, ss);
+  printf("%s\n", stroka);
+
+  sprintf(stroka2, "% .5d.", 32769);
+  printf("%s\n", stroka2);
 
   return 0;
 }
@@ -179,6 +185,9 @@ int what_is_speca(char *str, char *speca, state_of_speca *state,
     case 'd':
       result = speca_is_d(str, speca, state, arg_list);
       break;
+    case 'f':
+      result = speca_is_f(str, speca, state, arg_list);
+      break;
     default:
       result = 5;
       break;
@@ -204,17 +213,18 @@ int speca_is_d(char *str, char *speca, state_of_speca *state,
   switch (state->longshort) {
     case 'l': {
       long lngnbr = (long)va_arg(*arg_list, long);
-      strnbr = my_itoa((int)lngnbr);  // Упрощённая обработка long
+      strnbr = my_itoa((long)lngnbr, 'l');  // Упрощённая обработка long
       break;
     }
     case 'h': {
-      short shrtnbr = (short)va_arg(*arg_list, int);
-      strnbr = my_itoa((int)shrtnbr);  // Упрощённая обработка short
+      int makeshort = (int)va_arg(*arg_list, int);
+      int shrtnbr = handle_overflow(makeshort);
+      strnbr = my_itoa((int)shrtnbr, 'h');  // Упрощённая обработка short
       break;
     }
     case 0: {
       int nbr = (int)va_arg(*arg_list, int);
-      strnbr = my_itoa(nbr);
+      strnbr = my_itoa(nbr, 'i');
       break;
     }
     default:
@@ -230,9 +240,20 @@ int speca_is_d(char *str, char *speca, state_of_speca *state,
   return result;
 }
 
-char *my_itoa(int n) {
-  if (n == INT_MIN) return strdup("-2147483648");
-
+char *my_itoa(long n, char int_type) {
+  switch (int_type) {
+    case 'i':
+      if (n == -2147483648) return strdup("-2147483648");
+      break;
+    case 'l':
+      if (n == -9223372036854775807) return strdup("-9223372036854775807");
+      break;
+    case 'h':
+      if (n == -32768) return strdup("-32768");
+      break;
+    default:
+      break;
+  }
   int is_negative = 0;
   if (n < 0) {
     is_negative = 1;
@@ -240,7 +261,7 @@ char *my_itoa(int n) {
   }
 
   int length = is_negative ? 2 : 1;
-  int temp = n;
+  long temp = n;
   while (temp /= 10) length++;
   length++;
 
@@ -261,11 +282,10 @@ char *my_itoa(int n) {
 char *handle_flags_d(state_of_speca *state, char *strnbr) {
   int len = strlen(strnbr);
   int result_len = len;
+  char *work_strnbr = strnbr;
 
   if (state->width > result_len) result_len = state->width;
   if (state->precision > result_len) result_len = state->precision;
-
-  if (state->space && strnbr[0] != '-' && !state->plus) result_len++;
 
   char *result = (char *)malloc((result_len + 1) * sizeof(char));
   if (!result) return NULL;
@@ -281,9 +301,26 @@ char *handle_flags_d(state_of_speca *state, char *strnbr) {
     start_pos = result_len - (state->precision > len ? state->precision : len);
   }
 
-  if (state->plus && (strnbr[0] != '-')) {
+  if (start_pos > 0 && ((state->plus) || work_strnbr[0] == '-')) {
+    start_pos--;
+  }
+
+  if (state->plus && (work_strnbr[0] != '-')) {
     result[start_pos] = '+';
     start_pos++;
+  }
+
+  if (state->space && (work_strnbr[0] != '-') && !state->plus &&
+      state->width < len) {
+    result[start_pos] = ' ';
+    start_pos++;
+  }
+
+  if (work_strnbr[0] == '-') {
+    result[start_pos] = '-';
+    start_pos++;
+    work_strnbr += 1;
+    len -= 1;
   }
 
   if (state->precision > len) {
@@ -292,7 +329,55 @@ char *handle_flags_d(state_of_speca *state, char *strnbr) {
     start_pos += zeros_to_add;
   }
 
-  strcpy(result + start_pos, strnbr);
+  memcpy(result + start_pos, work_strnbr, len);
 
+  return result;
+}
+
+short int handle_overflow(int x) {
+  short int result = (short int)(x % 65536);
+  if (result > SHRT_MAX) {
+    result -= 65536;
+  } else if (result < SHRT_MIN) {
+    result += 65536;
+  }
+  return result;
+}
+
+int speca_is_f(char *str, char *speca, state_of_speca *state,
+               va_list *arg_list) {
+  int result = 0;
+  float fltnbr = (float)va_arg(*arg_list, double);
+  char *strnbr = float_to_string(fltnbr, state->precision);
+  printf("\n%s\n", strnbr);
+  free(strnbr);
+  return result;
+}
+
+char *float_to_string(float number, int precision) {
+  int integer_part = (int)number;                 // Целая часть
+  float fractional_part = number - integer_part;  // Дробная часть
+
+  // Преобразуем целую часть в строку
+  char *int_part = my_itoa(integer_part, 'i');
+  char *frc_part = malloc((precision + 1) * sizeof(char));
+  char *result = malloc((precision + strlen(int_part) + 1) * sizeof(char));
+
+  // Преобразуем дробную часть в строку
+  for (int i = 0; i < precision; i++) {
+    fractional_part *= 10;
+    int digit = (int)fractional_part;
+    frc_part[i] = '0' + digit;
+    fractional_part -= digit;
+  }
+  frc_part[precision] = '\0';
+
+  // Соединяем обе части в одну стркоу
+  strcat(result, int_part);
+  strcat(result, ".");
+  strcat(result, frc_part);
+  // Чистим всё
+  free(int_part);
+  free(frc_part);
   return result;
 }
