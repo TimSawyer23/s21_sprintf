@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include <limits.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,17 +42,18 @@ int speca_is_f(char *str, char *speca, state_of_speca *state,
 short int handle_overflow(int x);
 char *my_itoa(long n, char int_type);
 char *handle_flags_d(state_of_speca *state, char *strnbr);
-char *float_to_string(float number, int precision);
+char *handle_flags_f(state_of_speca *state, char *strnbr);  
+char *float_to_string(double number, int precision, int is_precision);
 
 int main() {
   char stroka[110000];
   char stroka2[110000];
-  float ss = 15.21;
+  float ss = 15.256325;
 
-  s21_sprintf(stroka, "% .5d. %.6f", 32769, ss);
+  s21_sprintf(stroka, "%+15.7f", ss);
   printf("%s\n", stroka);
 
-  sprintf(stroka2, "% .5d.", 32769);
+  sprintf(stroka2, "%+15.7f", ss);
   printf("%s\n", stroka2);
 
   return 0;
@@ -347,37 +349,103 @@ short int handle_overflow(int x) {
 int speca_is_f(char *str, char *speca, state_of_speca *state,
                va_list *arg_list) {
   int result = 0;
-  float fltnbr = (float)va_arg(*arg_list, double);
-  char *strnbr = float_to_string(fltnbr, state->precision);
-  printf("\n%s\n", strnbr);
-  free(strnbr);
+  char *str_for_print = NULL;
+  double fltnbr = (double)va_arg(*arg_list, double);
+  if (state->is_precision == 0) state->precision = 6;
+  char *strnbr = float_to_string(fltnbr, state->precision, state->is_precision);
+  if (strnbr) {
+    str_for_print = handle_flags_f(state, strnbr);
+    strcat(str, str_for_print);
+    free(strnbr);
+    free(str_for_print);
+  }
   return result;
 }
 
-char *float_to_string(float number, int precision) {
-  int integer_part = (int)number;                 // Целая часть
-  float fractional_part = number - integer_part;  // Дробная часть
+char *float_to_string(double number, int precision, int is_precision) {
+  // Вычисляем множитель для округления
+  double factor = pow(10, precision);
+
+  // Округляем число до нужного количества знаков после запятой
+  double rounded = round(number * factor) / factor;
+
+  // Извлекаем целую и дробную части
+  int integer_part = (int)rounded;
+  double fractional_part = rounded - integer_part;
 
   // Преобразуем целую часть в строку
   char *int_part = my_itoa(integer_part, 'i');
-  char *frc_part = malloc((precision + 1) * sizeof(char));
-  char *result = malloc((precision + strlen(int_part) + 1) * sizeof(char));
 
   // Преобразуем дробную часть в строку
+  char *frc_part = malloc((precision + 1) * sizeof(char));
   for (int i = 0; i < precision; i++) {
     fractional_part *= 10;
-    int digit = (int)fractional_part;
+    int digit = (int)(fractional_part + 0.0000001);
     frc_part[i] = '0' + digit;
     fractional_part -= digit;
   }
   frc_part[precision] = '\0';
 
-  // Соединяем обе части в одну стркоу
-  strcat(result, int_part);
-  strcat(result, ".");
+  // Соединяем обе части в одну строку
+  char *result = malloc((precision + strlen(int_part) + 2) * sizeof(char));
+  strcpy(result, int_part);
+  if (!is_precision || precision != 0) {
+    strcat(result, ".");
+  }
   strcat(result, frc_part);
-  // Чистим всё
+
+  // Освобождаем память
   free(int_part);
   free(frc_part);
+
+  return result;
+}
+
+char *handle_flags_f(state_of_speca *state, char *strnbr) {
+  int len = strlen(strnbr);
+  int result_len = len;
+  char *work_strnbr = strnbr;
+
+  if (state->width > result_len) result_len = state->width;
+  if (state->precision > result_len) result_len = state->precision;
+
+  char *result = (char *)malloc((result_len + 1) * sizeof(char));
+  if (!result) return NULL;
+  result[result_len] = '\0';
+
+  memset(result, ' ', result_len);  // Заполняем пробелами
+
+  int start_pos = 0;
+  if (state->minus) {
+    start_pos = 0;
+  } else {
+    // Учитываем точность при вычислении start_pos
+    start_pos = result_len - len;
+  }
+
+  if (start_pos > 0 && ((state->plus) || work_strnbr[0] == '-')) {
+    start_pos--;
+  }
+
+  if (state->plus && (work_strnbr[0] != '-')) {
+    result[start_pos] = '+';
+    start_pos++;
+  }
+
+  if (state->space && (work_strnbr[0] != '-') && !state->plus &&
+      state->width < len) {
+    result[start_pos] = ' ';
+    start_pos++;
+  }
+
+  if (work_strnbr[0] == '-') {
+    result[start_pos] = '-';
+    start_pos++;
+    work_strnbr += 1;
+    len -= 1;
+  }
+
+  memcpy(result + start_pos, work_strnbr, len);
+
   return result;
 }
